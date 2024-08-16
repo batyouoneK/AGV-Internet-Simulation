@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Three.js Heatmap Circle</title>
+    <style>
+        body { margin: 0; }
+        canvas { display: block; }
+        #startScreen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            z-index: 1;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 14px;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 5px;
+            border-radius: 5px;
+        }
+        #coordinates {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            color: white;
+            font-size: 14px;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 5px;
+            border-radius: 5px;
+        }
+        #toggleButton {
+            position: absolute;
+            top: 10px;
+            left: 200px;
+            padding: 10px;
+            background-color: green;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            z-index: 2;
+        }
+        #toggleButton.red {
+            background-color: red;
+        }
+    </style>
+</head>
+<body>
+    <div id="startScreen">
+        <form id="startForm">
+            <label for="width">Width:</label>
+            <input type="number" id="width" name="width" value="1024" required><br>
+            <label for="height">Height:</label>
+            <input type="number" id="height" name="height" value="1024" required><br>
+            <label for="radius">Radius:</label>
+            <input type="number" id="radius" name="radius" value="10" required><br>
+            <label for="scaleMaxX">Scale Max X:</label>
+            <input type="number" id="scaleMaxX" name="scaleMaxX" value="25000" required><br>
+            <label for="scaleMaxY">Scale Max Y:</label>
+            <input type="number" id="scaleMaxY" name="scaleMaxY" value="58000" required><br>
+            <button type="submit">Start</button>
+        </form>
+    </div>
+
+    <div id="info">Incoming Coordinates: (0, 0), <br> Internet Connection: 0</div>
+    <div id="coordinates">Coordinates: (0, 0)</div>
+    
+    <button id="toggleButton">Okları Gizle</button>
+    
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.126.1/build/three.module.js"
+            }
+        }
+    </script>
+
+    <script>
+        // Global variables
+        let internetValue, xValue, yValue;
+        let circleCenters = []; // Array to store circle centers
+        let arrows = []; // Array to store arrows
+        let arrowVisible = true; // Arrow visibility flag
+        let circleCounter = 0; // Counter for circles
+
+        async function fetchData() {
+            try {
+                const response = await fetch('/data');
+                if (!response.ok) throw new Error('Network response was not ok');
+                const data = await response.json();
+
+                // Assign values to global variables
+                internetValue = data.InternetSpeed;
+                xValue = data.X;
+                yValue = data.Y;
+
+                // Update the div showing the incoming data
+                const info = document.getElementById('info');
+                info.textContent = `Incoming Coordinates: (${xValue}, ${yValue}), Internet Connection: ${internetValue}`;
+
+            } catch (error) {
+                console.error('Fetch error:', error);
+            }
+        }
+
+        // Call fetchData every 1 second
+        setInterval(fetchData, 1000); // 1 second interval
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from './OrbitControls.js';
+
+        let colorMap = [
+            '#ff0000', '#fe2e00', '#fc4500', '#f95600', '#f56600', // 0-5, 6-10, 11-15, 16-20, 21-25
+            '#ef7500', '#e98200', '#e28e00', '#db9a00', '#d3a400', // 26-30, 31-35, 36-40, 41-45, 46-50
+            '#cbaf00', '#c2b800', '#b9c200', '#aecb00', '#a3d400', // 51-55, 56-60, 61-65, 66-70, 71-75
+            '#95dd00', '#84e600', '#6def00', '#52f700', '#22ff00'  // 76-80, 81-85, 86-90, 91-95, 96-100
+        ];
+
+        document.getElementById('startForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+            const width = parseInt(document.getElementById('width').value);
+            const height = parseInt(document.getElementById('height').value);
+            const radius = parseInt(document.getElementById('radius').value);
+            const scaleMaxX = parseInt(document.getElementById('scaleMaxX').value);
+            const scaleMaxY = parseInt(document.getElementById('scaleMaxY').value);
+            document.getElementById('startScreen').style.display = 'none';
+            init(width, height, radius, scaleMaxX, scaleMaxY);
+        });
+
+        function init(width, height, radius, scaleMaxX, scaleMaxY) {
+            const size = width * height;
+            const data = new Uint8Array(4 * size);
+            const whiteColor = new THREE.Color(0xffffff);
+
+            const whiteR = Math.floor(whiteColor.r * 255);
+            const whiteG = Math.floor(whiteColor.g * 255);
+            const whiteB = Math.floor(whiteColor.b * 255);
+
+            for (let i = 0; i < size; i++) {
+                const stride = i * 4;
+                data[stride] = whiteR;
+                data[stride + 1] = whiteG;
+                data[stride + 2] = whiteB;
+                data[stride + 3] = 255;
+            }
+
+            let circlePixels = [];
+            let allPixels = Array.from({ length: height }, () => Array(width).fill(null).map(() => ({ r: whiteR, g: whiteG, b: whiteB })));
+
+            // Function to set a pixel to a specific color
+            function setPixelColor(x, y, color) {
+                if (x < 0 || x >= width || y < 0 || y >= height) return;
+                const index = (y * width + x) * 4;
+                data[index] = Math.floor(color.r * 255);
+                data[index + 1] = Math.floor(color.g * 255);
+                data[index + 2] = Math.floor(color.b * 255);
+                data[index + 3] = 255;
+            }
+
+            // Function to get color based on internet value
+            function getColor(value) {
+                const index = Math.min(Math.floor(value / 5), colorMap.length - 1); // Ensure index is within bounds
+                const hexColor = colorMap[index];
+                return new THREE.Color(hexColor);
+            }
+
+            // Function to calculate average color
+            function averageColor(color1, color2) {
+                return new THREE.Color(
+                    (color1.r + color2.r) / 2,
+                    (color1.g + color2.g) / 2,
+                    (color1.b + color2.b) / 2
+                );
+            }
+
+            // Function to draw a circle and store pixel data
+            function drawCircle(centerX, centerY, radius, internetValue) {
+                const color = getColor(internetValue);
+                for (let y = -radius; y <= radius; y++) {
+                    for (let x = -radius; x <= radius; x++) {
+                        if (x * x + y * y <= radius * radius) {
+                            const newX = centerX + x + width / 2;
+                            const newY = centerY + y + height / 2;
+                            if (newX >= 0 && newX < width && newY >= 0 && newY < height) {
+                                const existingColor = allPixels[newY][newX];
+                                if (existingColor.r === whiteR && existingColor.g === whiteG && existingColor.b === whiteB) {
+                                    // If existing color is white, directly assign the new color
+                                    allPixels[newY][newX] = color;
+                                } else {
+                                    // Otherwise, blend the existing color with the new color
+                                    allPixels[newY][newX] = averageColor(existingColor, color);
+                                }
+                                setPixelColor(newX, newY, allPixels[newY][newX]);
+                            }
+                        }
+                    }
+                }
+
+                // Store the center of the circle
+                circleCenters.push({ x: centerX, y: centerY });
+
+                // Increment the circle counter
+                circleCounter++;
+
+                // Draw arrow if 3 circles have been drawn
+                if (circleCounter === 3) {
+                    if (circleCenters.length >= 3) {
+                        drawArrow(circleCenters[circleCenters.length - 3], circleCenters[circleCenters.length - 2]);
+                        drawArrow(circleCenters[circleCenters.length - 2], circleCenters[circleCenters.length - 1]);
+                    }
+                    circleCounter = 0;
+                }
+            }
+
+            // Function to scale a value to fit within the plane dimensions
+            function scaleValue(value, maxValue, scaleMax) {
+                return Math.floor((value / maxValue) * scaleMax);
+            }
+
+            // Function to draw an arrow between two circle centers
+            function drawArrow(center1, center2) {
+                if (!arrowVisible) return; // Do not draw if arrows are not visible
+
+                const direction = new THREE.Vector3(center2.x - center1.x, center2.y - center1.y, 0);
+                const length = direction.length();
+                const arrowHelper = new THREE.ArrowHelper(direction.normalize(), new THREE.Vector3(center1.x, center1.y, 0), length, 0xff0000, length * 0.02, length * 0.01);
+                scene.add(arrowHelper);
+                arrows.push(arrowHelper);
+            }
+
+            // Used the buffer to create a DataTexture
+            const texture = new THREE.DataTexture(data, width, height);
+            texture.needsUpdate = true;
+
+            // Scene setup
+            const scene = new THREE.Scene();
+
+            // Camera setup
+            const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 0, height / 2); // Camera positioned above the center
+            camera.lookAt(0, 0, 0); // Camera looks at the center of the plane
+
+            // Renderer setup
+            const renderer = new THREE.WebGLRenderer();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // Geometry and Material setup
+            const geometry = new THREE.PlaneGeometry(width, height);
+            const material = new THREE.MeshBasicMaterial({ map: texture });
+            const plane = new THREE.Mesh(geometry, material);
+            plane.position.set(0, 0, 0); // Center the plane at the origin
+            scene.add(plane);
+
+            // OrbitControls setup
+            const controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+
+            // Animation loop
+            function animate() {
+                requestAnimationFrame(animate);
+                controls.update();
+                renderer.render(scene, camera);
+            }
+
+            animate();
+
+            // Handle window resize
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+
+            // Mouse move event listener
+            window.addEventListener('mousemove', (event) => {
+                const mouse = new THREE.Vector2(
+                    (event.clientX / window.innerWidth) * 2 - 1,
+                    -(event.clientY / window.innerHeight) * 2 + 1
+                );
+
+                const raycaster = new THREE.Raycaster();
+                raycaster.setFromCamera(mouse, camera);
+                const intersects = raycaster.intersectObject(plane);
+
+                if (intersects.length > 0) {
+                    const point = intersects[0].point;
+                    const coordinates = document.getElementById('coordinates');
+                    coordinates.textContent = `Coordinates: (${Math.floor(point.x)}, ${Math.floor(point.y)})`;
+                }
+            });
+
+            // Example usage
+            setInterval(() => {
+                const internetConnection = (typeof internetValue !== 'undefined') ? internetValue : Math.floor(Math.random() * 101);
+                const scaledX = (typeof xValue !== 'undefined') ? scaleValue(xValue, scaleMaxX, width) - width / 2 : Math.floor(Math.random() * width) - width / 2;
+                const scaledY = (typeof yValue !== 'undefined') ? scaleValue(yValue, scaleMaxY, height) - height / 2 : Math.floor(Math.random() * height) - height / 2;
+
+                drawCircle(scaledX, scaledY, radius, internetConnection);
+                texture.needsUpdate = true;
+            }, 500); // Draw a new circle every 500 milliseconds
+
+            // Toggle arrow visibility
+            document.getElementById('toggleButton').addEventListener('click', function() {
+                arrowVisible = !arrowVisible;
+                if (!arrowVisible) {
+                    // Remove all arrows from the scene
+                    arrows.forEach(arrow => scene.remove(arrow));
+                    arrows = [];
+                } else {
+                    // Redraw arrows
+                    for (let i = 0; i < circleCenters.length - 1; i++) {
+                        drawArrow(circleCenters[i], circleCenters[i + 1]);
+                    }
+                }
+                this.classList.toggle('red', !arrowVisible);
+                this.textContent = arrowVisible ? 'Okları Gizle' : 'Okları Göster';
+            });
+        }
+    </script>
+</body>
+</html>
