@@ -24,6 +24,10 @@ Project Screenshots:
 ![ss2](https://github.com/user-attachments/assets/bdb56599-2c1c-45f5-9ba7-472d780c4872)
 
 
+https://github.com/user-attachments/assets/ccdb4d22-48d8-44e3-8cf3-56c08851ab18
+
+
+
 
 Prepared by : Batuhan Kiziltas
 
